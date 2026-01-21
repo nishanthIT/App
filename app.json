@@ -1,15 +1,16 @@
 {
   "expo": {
-    "name": "my-app",
+    "name": "Paymi",
     "slug": "my-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "paymi",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.n1sh.paymi"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +20,9 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "pan",
+      "package": "com.n1sh.paymi"
     },
     "web": {
       "output": "static",
@@ -38,11 +41,27 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#2196F3",
+          "sounds": []
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "1708b933-6a0c-41fe-986a-d74cef94aad9"
+      }
+    },
+    "owner": "n1sh"
   }
 }

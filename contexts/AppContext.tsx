@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useReducer, ReactNode } from 'react';
+import React, { createContext, useContext, useReducer, ReactNode, useEffect, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '@/constants/theme';
 
 // Types
@@ -7,6 +8,7 @@ export interface User {
   email: string;
   name: string;
   shopName: string;
+  earnings?: number;
   location?: {
     latitude: number;
     longitude: number;
@@ -113,7 +115,66 @@ export type AppAction =
 const initialState: AppState = {
   user: null,
   isAuthenticated: false,
-  shoppingLists: [],
+  shoppingLists: [
+    // Sample list for testing quantity controls
+    {
+      id: 'sample-list-1',
+      name: 'Weekly Shopping',
+      items: [
+        {
+          id: 'item-1',
+          productId: 'prod-1',
+          product: {
+            id: 'prod-1',
+            name: 'Organic Milk',
+            barcode: '123456789',
+            category: 'Dairy',
+            image: 'milk.jpg',
+            description: 'Fresh organic whole milk'
+          },
+          quantity: 2,
+          notes: '',
+          isPurchased: false,
+          addedAt: new Date().toISOString()
+        },
+        {
+          id: 'item-2',
+          productId: 'prod-2',
+          product: {
+            id: 'prod-2',
+            name: 'Whole Wheat Bread',
+            barcode: '987654321',
+            category: 'Bakery',
+            image: 'bread.jpg',
+            description: 'Fresh whole wheat bread'
+          },
+          quantity: 1,
+          notes: '',
+          isPurchased: false,
+          addedAt: new Date().toISOString()
+        },
+        {
+          id: 'item-3',
+          productId: 'prod-3',
+          product: {
+            id: 'prod-3',
+            name: 'Free Range Eggs',
+            barcode: '456789123',
+            category: 'Dairy',
+            image: 'eggs.jpg',
+            description: 'Fresh free range eggs'
+          },
+          quantity: 3,
+          notes: '',
+          isPurchased: false,
+          addedAt: new Date().toISOString()
+        }
+      ],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      totalSavings: 0
+    }
+  ],
   currentListId: null,
   stores: [],
   products: [],
@@ -252,14 +313,58 @@ function appReducer(state: AppState, action: AppAction): AppState {
 const AppContext = createContext<{
   state: AppState;
   dispatch: React.Dispatch<AppAction>;
+  isLoading: boolean;
 } | null>(null);
 
 // Provider component
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
+  const [isRestoring, setIsRestoring] = useState(true);
+
+  // Restore authentication state from AsyncStorage on app start
+  useEffect(() => {
+    const restoreAuthState = async () => {
+      try {
+        console.log('Restoring auth state...');
+        const token = await AsyncStorage.getItem('auth_token');
+        const userStr = await AsyncStorage.getItem('user');
+        
+        console.log('Token found:', !!token);
+        console.log('User found:', !!userStr);
+        
+        if (token && userStr) {
+          const user = JSON.parse(userStr);
+          console.log('Restoring user:', user.email);
+          
+          // Restore user to context
+          dispatch({ 
+            type: 'LOGIN', 
+            payload: {
+              id: user.id,
+              email: user.email,
+              name: user.name || 'User',
+              shopName: user.shopName || 'My Shop',
+              location: user.location || {
+                latitude: 51.5074,
+                longitude: -0.1278,
+              },
+            }
+          });
+        } else {
+          console.log('No stored auth data found');
+        }
+      } catch (error) {
+        console.error('Error restoring auth state:', error);
+      } finally {
+        setIsRestoring(false);
+      }
+    };
+
+    restoreAuthState();
+  }, []);
 
   return (
-    <AppContext.Provider value={{ state, dispatch }}>
+    <AppContext.Provider value={{ state, dispatch, isLoading: isRestoring }}>
       {children}
     </AppContext.Provider>
   );
@@ -272,6 +377,17 @@ export function useApp() {
     throw new Error('useApp must be used within an AppProvider');
   }
   return context;
+}
+
+// Logout helper function
+export async function performLogout(dispatch: React.Dispatch<AppAction>) {
+  try {
+    await AsyncStorage.removeItem('auth_token');
+    await AsyncStorage.removeItem('user');
+    dispatch({ type: 'LOGOUT' });
+  } catch (error) {
+    console.error('Error during logout:', error);
+  }
 }
 
 // Helper functions

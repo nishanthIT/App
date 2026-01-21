@@ -9,27 +9,56 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Modal,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApp } from '@/contexts/AppContext';
+import { useContacts } from '@/contexts/ContactsContext';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
+import authService from '@/services/authService';
 
 export default function RegisterScreen() {
   const { dispatch } = useApp();
+  const { initializeAfterLogin } = useContacts();
+  const router = useRouter();
   const [formData, setFormData] = useState({
     name: '',
     email: '',
-    shopName: '',
     password: '',
     confirmPassword: '',
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [scaleAnim] = useState(new Animated.Value(0));
+
+  const showSuccess = () => {
+    setShowSuccessModal(true);
+    scaleAnim.setValue(0);
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 6,
+      tension: 100,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleGetStarted = () => {
+    Animated.timing(scaleAnim, {
+      toValue: 0,
+      duration: 150,
+      useNativeDriver: true,
+    }).start(() => {
+      setShowSuccessModal(false);
+      router.replace('/(tabs)/lists');
+    });
+  };
 
   const validateEmail = (email: string) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -45,10 +74,10 @@ export default function RegisterScreen() {
   };
 
   const handleRegister = async () => {
-    const { name, email, shopName, password, confirmPassword } = formData;
+    const { name, email, password, confirmPassword } = formData;
 
     // Validation
-    if (!name.trim() || !email.trim() || !shopName.trim() || !password.trim() || !confirmPassword.trim()) {
+    if (!name.trim() || !email.trim() || !password.trim() || !confirmPassword.trim()) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
@@ -71,24 +100,36 @@ export default function RegisterScreen() {
     setIsLoading(true);
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Mock user data
-      const user = {
-        id: Date.now().toString(),
-        email: email.trim(),
+      // Call backend API
+      const response = await authService.register({
         name: name.trim(),
-        shopName: shopName.trim(),
+        email: email.trim(),
+        password: password.trim(),
+      });
+      
+      // Create user object for context
+      const user = {
+        id: response.user.id,
+        email: response.user.email,
+        name: response.user.name || 'User',
+        shopName: 'My Shop',
         location: {
           latitude: 51.5074,
           longitude: -0.1278,
         },
       };
 
+      console.log('Registration successful:', user);
       dispatch({ type: 'LOGIN', payload: user });
-    } catch (error) {
-      Alert.alert('Error', 'Registration failed. Please try again.');
+      
+      // Initialize chat data after successful registration
+      await initializeAfterLogin();
+      
+      // Show success modal
+      showSuccess();
+    } catch (error: any) {
+      console.error('Registration error:', error);
+      Alert.alert('Error', error.message || 'Registration failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -105,10 +146,11 @@ export default function RegisterScreen() {
             <View style={styles.logoContainer}>
               <IconSymbol name="pound.circle.fill" size={60} color={Colors.light.primary} />
             </View>
-            <ThemedText style={styles.title}>Create Account</ThemedText>
+            <ThemedText style={styles.title}>Start Free Trial</ThemedText>
             <ThemedText style={styles.subtitle}>
-              Join thousands of shop owners saving money every day
+              Get 90 days of premium features at no cost
             </ThemedText>
+            <ThemedText style={styles.trialText}>✨ No payment required • Cancel anytime</ThemedText>
           </View>
 
           <ThemedView style={styles.formContainer}>
@@ -145,21 +187,7 @@ export default function RegisterScreen() {
               </View>
             </View>
 
-            <View style={styles.inputGroup}>
-              <ThemedText style={styles.label}>Shop Name</ThemedText>
-              <View style={styles.inputContainer}>
-                <IconSymbol name="building.2" size={20} color={Colors.light.textSecondary} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter your shop name"
-                  placeholderTextColor={Colors.light.textLight}
-                  value={formData.shopName}
-                  onChangeText={(value) => handleInputChange('shopName', value)}
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                />
-              </View>
-            </View>
+
 
             <View style={styles.inputGroup}>
               <ThemedText style={styles.label}>Password</ThemedText>
@@ -221,9 +249,9 @@ export default function RegisterScreen() {
               disabled={isLoading}
             >
               {isLoading ? (
-                <ThemedText style={styles.registerButtonText}>Creating Account...</ThemedText>
+                <ThemedText style={styles.registerButtonText}>Starting Trial...</ThemedText>
               ) : (
-                <ThemedText style={styles.registerButtonText}>Create Account</ThemedText>
+                <ThemedText style={styles.registerButtonText}>Start Free Trial</ThemedText>
               )}
             </TouchableOpacity>
 
@@ -247,6 +275,64 @@ export default function RegisterScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Success Modal */}
+      <Modal
+        visible={showSuccessModal}
+        transparent
+        animationType="fade"
+        onRequestClose={handleGetStarted}
+      >
+        <View style={styles.modalOverlay}>
+          <Animated.View 
+            style={[
+              styles.successModalContainer,
+              { transform: [{ scale: scaleAnim }] }
+            ]}
+          >
+            <View style={styles.successIconContainer}>
+              <View style={styles.successIconCircle}>
+                <IconSymbol name="checkmark.circle.fill" size={80} color="#10B981" />
+              </View>
+            </View>
+            
+            <ThemedText style={styles.successTitle}>Welcome to Paymi! 🎉</ThemedText>
+            
+            <ThemedText style={styles.successSubtitle}>
+              Your account has been created successfully!
+            </ThemedText>
+            
+            <View style={styles.trialBadge}>
+              <IconSymbol name="gift.fill" size={24} color={Colors.light.primary} />
+              <ThemedText style={styles.trialBadgeText}>90 Days Free Trial</ThemedText>
+            </View>
+            
+            <View style={styles.benefitsList}>
+              <View style={styles.benefitItem}>
+                <IconSymbol name="checkmark.circle.fill" size={20} color="#10B981" />
+                <ThemedText style={styles.benefitText}>Create unlimited shopping lists</ThemedText>
+              </View>
+              <View style={styles.benefitItem}>
+                <IconSymbol name="checkmark.circle.fill" size={20} color="#10B981" />
+                <ThemedText style={styles.benefitText}>Compare prices across stores</ThemedText>
+              </View>
+              <View style={styles.benefitItem}>
+                <IconSymbol name="checkmark.circle.fill" size={20} color="#10B981" />
+                <ThemedText style={styles.benefitText}>Share lists with your team</ThemedText>
+              </View>
+              <View style={styles.benefitItem}>
+                <IconSymbol name="checkmark.circle.fill" size={20} color="#10B981" />
+                <ThemedText style={styles.benefitText}>Earn points for price reports</ThemedText>
+              </View>
+            </View>
+            
+            <TouchableOpacity style={styles.getStartedButton} onPress={handleGetStarted}>
+              <ThemedText style={styles.getStartedButtonText}>Get Started</ThemedText>
+              <IconSymbol name="arrow.right" size={20} color="#FFF" />
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -280,6 +366,14 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: Colors.light.textSecondary,
     textAlign: 'center',
+    marginBottom: Spacing.sm,
+  },
+  trialText: {
+    ...Typography.bodySmall,
+    color: Colors.light.primary,
+    textAlign: 'center',
+    fontWeight: '500',
+    marginBottom: Spacing.md,
   },
   formContainer: {
     backgroundColor: Colors.light.backgroundCard,
@@ -357,6 +451,92 @@ const styles = StyleSheet.create({
   signInText: {
     ...Typography.body,
     color: Colors.light.primary,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.lg,
+  },
+  successModalContainer: {
+    backgroundColor: Colors.light.background,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    width: '100%',
+    maxWidth: 380,
+    alignItems: 'center',
+    ...Shadows.lg,
+  },
+  successIconContainer: {
+    marginBottom: Spacing.lg,
+  },
+  successIconCircle: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#E8FDF5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  successTitle: {
+    ...Typography.h2,
+    color: Colors.light.text,
+    textAlign: 'center',
+    marginBottom: Spacing.sm,
+  },
+  successSubtitle: {
+    ...Typography.body,
+    color: Colors.light.textSecondary,
+    textAlign: 'center',
+    marginBottom: Spacing.lg,
+  },
+  trialBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.light.primaryLight || '#E0F2FE',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    marginBottom: Spacing.lg,
+    gap: Spacing.sm,
+  },
+  trialBadgeText: {
+    ...Typography.label,
+    color: Colors.light.primary,
+    fontWeight: '700',
+  },
+  benefitsList: {
+    width: '100%',
+    marginBottom: Spacing.xl,
+  },
+  benefitItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    gap: Spacing.sm,
+  },
+  benefitText: {
+    ...Typography.body,
+    color: Colors.light.text,
+    flex: 1,
+  },
+  getStartedButton: {
+    flexDirection: 'row',
+    backgroundColor: Colors.light.primary,
+    borderRadius: BorderRadius.md,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    width: '100%',
+    ...Shadows.sm,
+  },
+  getStartedButtonText: {
+    ...Typography.label,
+    color: '#FFF',
     fontWeight: '600',
   },
 });

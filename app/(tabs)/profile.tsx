@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,16 +6,73 @@ import {
   TouchableOpacity,
   Alert,
   ScrollView,
+  StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useApp } from '@/contexts/AppContext';
+import { useApp, performLogout } from '@/contexts/AppContext';
 import { Colors, Typography, Spacing, BorderRadius, Shadows, Glassmorphism } from '@/constants/theme';
-import { IconSymbol } from '@/components/ui/icon-symbol';
+import { Ionicons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useRouter } from 'expo-router';
+import { priceReportsAPI } from '@/services/api';
+import { API_CONFIG } from '@/config/api';
 
 export default function ProfileScreen() {
   const { state, dispatch } = useApp();
+  const router = useRouter();
+  const [earnings, setEarnings] = useState(0);
+  const [approvedReports, setApprovedReports] = useState(0);
+  const [pendingReports, setPendingReports] = useState(0);
+  const [subscriptionInfo, setSubscriptionInfo] = useState<any>(null);
+  const [points, setPoints] = useState(0);
+
+  useEffect(() => {
+    fetchEarningsData();
+    fetchUserInfo();
+  }, []);
+
+  const fetchEarningsData = async () => {
+    try {
+      const data = await priceReportsAPI.getUserReports();
+      setEarnings(data.earnings || 0);
+      
+      // Count approved and pending reports
+      const approved = data.reports.filter((report: any) => report.status === 'APPROVED').length;
+      const pending = data.reports.filter((report: any) => report.status === 'PENDING').length;
+      
+      setApprovedReports(approved);
+      setPendingReports(pending);
+    } catch (error) {
+      console.error('Error fetching earnings data:', error);
+    }
+  };
+
+  const fetchUserInfo = async () => {
+    try {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/me`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('📊 User data received:', JSON.stringify(data, null, 2));
+        console.log('📊 Subscription info:', data.user?.subscriptionInfo);
+        console.log('📊 Points:', data.user?.points);
+        
+        setSubscriptionInfo(data.user.subscriptionInfo);
+        setPoints(parseFloat(data.user.points || 0));
+      } else {
+        console.error('❌ Failed to fetch user info, status:', response.status);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching user info:', error);
+    }
+  };
 
   const handleLogout = () => {
     Alert.alert(
@@ -26,7 +83,10 @@ export default function ProfileScreen() {
         {
           text: 'Logout',
           style: 'destructive',
-          onPress: () => dispatch({ type: 'LOGOUT' }),
+          onPress: async () => {
+            await performLogout(dispatch);
+            router.replace('/auth/login');
+          },
         },
       ]
     );
@@ -48,11 +108,86 @@ export default function ProfileScreen() {
     Alert.alert('About', 'Paymi App v1.0.0\n\nBuilt for UK shop owners to compare wholesale prices and save money.');
   };
 
+  const handleReportPrice = () => {
+    router.push('/price-report');
+  };
+
+  const handleExtendTrial = () => {
+    const availableOptions = [];
+    availableOptions.push({ text: 'Cancel', style: 'cancel' as const });
+    
+    if (points >= 7) {
+      availableOptions.push({ 
+        text: '7 Days', 
+        onPress: () => extendTrialWithPoints(7)
+      });
+    }
+    
+    if (points >= 15) {
+      availableOptions.push({ 
+        text: '15 Days', 
+        onPress: () => extendTrialWithPoints(15)
+      });
+    }
+    
+    if (points >= 30) {
+      availableOptions.push({ 
+        text: '30 Days', 
+        onPress: () => extendTrialWithPoints(30)
+      });
+    }
+
+    if (availableOptions.length === 1) {
+      Alert.alert('Insufficient Points', 'You need at least 7 points to extend your trial.');
+      return;
+    }
+
+    Alert.alert(
+      'Extend Trial',
+      `You have ${points} points. Each point extends your trial by 1 day.\n\nHow many days would you like to extend?`,
+      availableOptions
+    );
+  };
+
+  const extendTrialWithPoints = async (days: number) => {
+    if (points < days) {
+      Alert.alert('Insufficient Points', `You need ${days} points but only have ${points} points.`);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/auth/extend-trial`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ days }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        Alert.alert(
+          'Trial Extended!', 
+          `Your trial has been extended by ${days} days. You now have ${data.data.daysRemaining} days remaining.`
+        );
+        // Refresh user info
+        await fetchUserInfo();
+      } else {
+        Alert.alert('Error', data.error || 'Failed to extend trial');
+      }
+    } catch (error) {
+      console.error('Error extending trial:', error);
+      Alert.alert('Error', 'Failed to extend trial');
+    }
+  };
+
   const renderProfileSection = () => (
     <ThemedView style={styles.profileSection}>
       <View style={styles.avatarContainer}>
         <View style={styles.avatar}>
-          <IconSymbol name="person.fill" size={40} color={Colors.light.background} />
+          <Ionicons name="person" size={40} color={Colors.light.background} />
         </View>
       </View>
       
@@ -69,42 +204,58 @@ export default function ProfileScreen() {
       </View>
       
       <TouchableOpacity style={styles.editButton} onPress={handleEditProfile}>
-        <IconSymbol name="pencil" size={16} color={Colors.light.primary} />
+        <Ionicons name="pencil" size={16} color={Colors.light.primary} />
       </TouchableOpacity>
     </ThemedView>
   );
 
   const renderStatsSection = () => (
     <ThemedView style={styles.statsSection}>
-      <ThemedText style={styles.sectionTitle}>Your Savings</ThemedText>
+      <ThemedText style={styles.sectionTitle}>Your Earnings</ThemedText>
       
       <View style={styles.statsGrid}>
         <View style={styles.statCard}>
-          <IconSymbol name="list.bullet.rectangle" size={24} color={Colors.light.primary} />
-          <ThemedText style={styles.statNumber}>{state.shoppingLists.length}</ThemedText>
-          <ThemedText style={styles.statLabel}>Shopping Lists</ThemedText>
+          <Ionicons name="star" size={24} color={Colors.light.primary} />
+          <ThemedText style={styles.statNumber}>{earnings}</ThemedText>
+          <ThemedText style={styles.statLabel}>Points Earned</ThemedText>
         </View>
         
         <View style={styles.statCard}>
-          <IconSymbol name="pound.circle" size={24} color={Colors.light.success} />
+          <Ionicons name="checkmark-circle" size={24} color={Colors.light.success} />
+          <ThemedText style={styles.statNumber}>{approvedReports}</ThemedText>
+          <ThemedText style={styles.statLabel}>Reports Approved</ThemedText>
+        </View>
+        
+        <View style={styles.statCard}>
+          <Ionicons 
+            name="time" 
+            size={24} 
+            color={subscriptionInfo?.isExpired ? Colors.light.error : Colors.light.primary} 
+          />
           <ThemedText style={styles.statNumber}>
-            £{state.shoppingLists.reduce((total, list) => total + (list.totalSavings || 0), 0).toFixed(0)}
+            {subscriptionInfo ? (subscriptionInfo.isExpired ? '0' : subscriptionInfo.daysRemaining) : '--'}
           </ThemedText>
-          <ThemedText style={styles.statLabel}>Total Saved</ThemedText>
+          <ThemedText style={styles.statLabel}>Days Left</ThemedText>
         </View>
         
         <View style={styles.statCard}>
-          <IconSymbol name="building.2" size={24} color={Colors.light.secondary} />
-          <ThemedText style={styles.statNumber}>{state.stores.length}</ThemedText>
-          <ThemedText style={styles.statLabel}>Suppliers</ThemedText>
-        </View>
-        
-        <View style={styles.statCard}>
-          <IconSymbol name="tag" size={24} color={Colors.light.warning} />
-          <ThemedText style={styles.statNumber}>{state.promotions.length}</ThemedText>
-          <ThemedText style={styles.statLabel}>Active Promotions</ThemedText>
+          <Ionicons name="diamond" size={24} color={Colors.light.accent} />
+          <ThemedText style={styles.statNumber}>{points}</ThemedText>
+          <ThemedText style={styles.statLabel}>Points</ThemedText>
         </View>
       </View>
+      
+      <TouchableOpacity style={styles.reportPriceButton} onPress={handleReportPrice}>
+        <Ionicons name="pricetag" size={20} color={Colors.light.background} />
+        <ThemedText style={styles.reportPriceText}>Report Wrong Price</ThemedText>
+      </TouchableOpacity>
+
+      {subscriptionInfo && subscriptionInfo.daysRemaining <= 7 && !subscriptionInfo.isExpired && (
+        <TouchableOpacity style={styles.extendTrialButton} onPress={handleExtendTrial}>
+          <Ionicons name="time" size={20} color={Colors.light.background} />
+          <ThemedText style={styles.extendTrialText}>Extend Trial with Points</ThemedText>
+        </TouchableOpacity>
+      )}
     </ThemedView>
   );
 
@@ -114,31 +265,31 @@ export default function ProfileScreen() {
       
       <TouchableOpacity style={styles.menuItem} onPress={handleSettings}>
         <View style={styles.menuItemLeft}>
-          <IconSymbol name="gearshape" size={20} color={Colors.light.textSecondary} />
+          <Ionicons name="settings" size={20} color={Colors.light.textSecondary} />
           <ThemedText style={styles.menuItemText}>Settings</ThemedText>
         </View>
-        <IconSymbol name="chevron.right" size={16} color={Colors.light.textLight} />
+        <Ionicons name="chevron-forward" size={16} color={Colors.light.textLight} />
       </TouchableOpacity>
       
       <TouchableOpacity style={styles.menuItem} onPress={handleHelp}>
         <View style={styles.menuItemLeft}>
-          <IconSymbol name="questionmark.circle" size={20} color={Colors.light.textSecondary} />
+          <Ionicons name="help-circle" size={20} color={Colors.light.textSecondary} />
           <ThemedText style={styles.menuItemText}>Help & Support</ThemedText>
         </View>
-        <IconSymbol name="chevron.right" size={16} color={Colors.light.textLight} />
+        <Ionicons name="chevron-forward" size={16} color={Colors.light.textLight} />
       </TouchableOpacity>
       
       <TouchableOpacity style={styles.menuItem} onPress={handleAbout}>
         <View style={styles.menuItemLeft}>
-          <IconSymbol name="info.circle" size={20} color={Colors.light.textSecondary} />
+          <Ionicons name="information-circle" size={20} color={Colors.light.textSecondary} />
           <ThemedText style={styles.menuItemText}>About</ThemedText>
         </View>
-        <IconSymbol name="chevron.right" size={16} color={Colors.light.textLight} />
+        <Ionicons name="chevron-forward" size={16} color={Colors.light.textLight} />
       </TouchableOpacity>
       
       <TouchableOpacity style={[styles.menuItem, styles.logoutItem]} onPress={handleLogout}>
         <View style={styles.menuItemLeft}>
-          <IconSymbol name="rectangle.portrait.and.arrow.right" size={20} color={Colors.light.error} />
+          <Ionicons name="log-out" size={20} color={Colors.light.error} />
           <ThemedText style={[styles.menuItemText, styles.logoutText]}>Logout</ThemedText>
         </View>
       </TouchableOpacity>
@@ -146,17 +297,14 @@ export default function ProfileScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <ThemedText style={styles.title}>Profile</ThemedText>
-      </View>
-
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.dark.background} />
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {renderProfileSection()}
         {renderStatsSection()}
         {renderMenuSection()}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -164,17 +312,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.dark.background,
-  },
-  header: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.lg,
-    backgroundColor: Colors.light.background,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
-  },
-  title: {
-    ...Typography.h2,
-    color: Colors.light.text,
+    marginTop: 20, // Top margin for breathing room
   },
   content: {
     flex: 1,
@@ -294,8 +432,34 @@ const styles = StyleSheet.create({
   logoutText: {
     color: Colors.dark.error,
   },
-  title: {
-    ...Typography.h2,
-    color: Colors.dark.text,
+  reportPriceButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.light.primary,
+    marginHorizontal: Spacing.md,
+    marginTop: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    gap: Spacing.sm,
   },
+  reportPriceText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: Colors.light.background,
+  },
+  extendTrialButton: {
+    backgroundColor: Colors.light.primary,
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 20,
+    marginHorizontal: 20,
+  },
+  extendTrialText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: Colors.light.background,
+  },
+  
 });

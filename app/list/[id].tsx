@@ -18,6 +18,7 @@ import { ThemedView } from '@/components/themed-view';
 import { generateShoppingListPDF, sharePDF } from '@/utils/pdfExport';
 import { ConfirmationModal } from '@/components/ui/confirmation-modal';
 import { SelectionModal } from '@/components/ui/selection-modal';
+import listService from '@/services/listService';
 
 export default function ListDetailScreen() {
   const { id } = useLocalSearchParams();
@@ -73,16 +74,66 @@ export default function ListDetailScreen() {
     Alert.alert('Search', 'Manual search feature coming soon!');
   };
 
-  const handleTogglePurchased = (itemId: string) => {
-    dispatch({
-      type: 'TOGGLE_ITEM_PURCHASED',
-      payload: { listId: currentList.id, itemId },
-    });
+  const handleTogglePurchased = async (itemId: string) => {
+    try {
+      // Update backend first
+      const result = await listService.togglePurchased(currentList.id, itemId);
+      console.log('✅ Backend toggle result:', result);
+      
+      // Then update local state
+      dispatch({
+        type: 'TOGGLE_ITEM_PURCHASED',
+        payload: { listId: currentList.id, itemId },
+      });
+    } catch (error) {
+      console.error('❌ Failed to toggle purchased status:', error);
+      // Show error to user but don't update UI state
+      Alert.alert('Error', 'Failed to update item status. Please try again.');
+    }
   };
 
   const handleRemoveItem = (itemId: string, itemName: string) => {
     setItemToDelete({ id: itemId, name: itemName });
     setShowDeleteModal(true);
+  };
+
+  const handleQuantityChange = async (itemId: string, change: number) => {
+    const item = currentList.items.find(i => i.id === itemId);
+    if (!item) return;
+
+    const currentQuantity = item.quantity || 1; // Fallback to 1 if quantity is undefined
+    const newQuantity = currentQuantity + change;
+    if (newQuantity < 1) return; // Don't allow quantity below 1
+
+    try {
+      // Optimistically update the UI
+      dispatch({
+        type: 'UPDATE_LIST_ITEM',
+        payload: { 
+          listId: currentList.id, 
+          itemId: itemId, 
+          updates: { quantity: newQuantity } 
+        },
+      });
+
+      // Sync with backend (assuming we have productAtShopId in item)
+      // For now, we'll just update locally since the current data structure
+      // doesn't include productAtShopId. In a real implementation, you'd
+      // call: await listService.updateProductQuantity(currentList.id, item.productAtShopId, newQuantity);
+      
+    } catch (error) {
+      console.error('Failed to update quantity:', error);
+      // Revert the optimistic update
+      dispatch({
+        type: 'UPDATE_LIST_ITEM',
+        payload: { 
+          listId: currentList.id, 
+          itemId: itemId, 
+          updates: { quantity: currentQuantity } 
+        },
+      });
+      Alert.alert('Error', 'Failed to update quantity. Please try again.');
+    }
   };
 
   const confirmRemoveItem = () => {
@@ -132,8 +183,10 @@ export default function ListDetailScreen() {
       });
 
       await sharePDF(uri, `${currentList.name}-shopping-list.pdf`);
+      setShowExportModal(false);
     } catch (error) {
-      Alert.alert('Error', 'Failed to generate PDF. Please try again.');
+      console.error('PDF share error:', error);
+      Alert.alert('Error', 'Failed to share PDF. Please try again.');
     }
   };
 
@@ -189,13 +242,44 @@ export default function ListDetailScreen() {
                 {item.product.name}
               </ThemedText>
               <View style={styles.compactDetails}>
-                <ThemedText style={styles.compactPrice}>£{bestPrice.price.toFixed(2)}</ThemedText>
-                <ThemedText style={styles.compactQuantity}>Qty: {item.quantity}</ThemedText>
-                {savings > 0 && (
-                  <View style={styles.compactSavingsBadge}>
-                    <ThemedText style={styles.compactSavingsText}>-£{savings.toFixed(2)}</ThemedText>
+                <View style={styles.compactDetailsRow}>
+                  <ThemedText style={styles.compactPrice}>£{bestPrice.price.toFixed(2)}</ThemedText>
+                  {savings > 0 && (
+                    <View style={styles.compactSavingsBadge}>
+                      <ThemedText style={styles.compactSavingsText}>-£{savings.toFixed(2)}</ThemedText>
+                    </View>
+                  )}
+                </View>
+                
+                {/* Quantity Controls Row */}
+                <View style={styles.compactDetailsRow}>
+                  <View style={styles.quantityControls}>
+                    <TouchableOpacity 
+                      style={[styles.quantityButton, (item.quantity || 1) <= 1 && { opacity: 0.5 }]}
+                      onPress={() => handleQuantityChange(item.id, -1)}
+                      disabled={(item.quantity || 1) <= 1}
+                    >
+                      <IconSymbol 
+                        name="minus" 
+                        size={16} 
+                        color={Colors.dark.background} 
+                      />
+                    </TouchableOpacity>
+                    
+                    <ThemedText style={styles.quantityText}>Qty: {item.quantity || 1}</ThemedText>
+                    
+                    <TouchableOpacity 
+                      style={styles.quantityButton}
+                      onPress={() => handleQuantityChange(item.id, 1)}
+                    >
+                      <IconSymbol 
+                        name="plus" 
+                        size={16} 
+                        color={Colors.dark.background} 
+                      />
+                    </TouchableOpacity>
                   </View>
-                )}
+                </View>
               </View>
             </View>
           </View>
@@ -299,9 +383,11 @@ export default function ListDetailScreen() {
           <ThemedText style={styles.actionButtonText}>Add Item</ThemedText>
         </TouchableOpacity>
         
-        <TouchableOpacity style={styles.actionButton} onPress={handleExportPDF}>
-          <IconSymbol name="square.and.arrow.up" size={20} color={Colors.light.secondary} />
-          <ThemedText style={styles.actionButtonText}>Export PDF</ThemedText>
+        <TouchableOpacity style={styles.shareButton} onPress={handleExportPDF}>
+          <View style={styles.shareButtonGradient}>
+            <IconSymbol name="square.and.arrow.up" size={22} color="#FFFFFF" />
+            <ThemedText style={styles.shareButtonText}>Share PDF</ThemedText>
+          </View>
         </TouchableOpacity>
       </View>
 
@@ -357,11 +443,11 @@ export default function ListDetailScreen() {
         type="danger"
       />
 
-      {/* Export Modal */}
+      {/* Share PDF Modal */}
       <SelectionModal
         visible={showExportModal}
         onClose={() => setShowExportModal(false)}
-        title="Export PDF"
+        title="Share Shopping List"
         options={[
           {
             id: 'money',
@@ -452,6 +538,33 @@ const styles = StyleSheet.create({
   actionButtonText: {
     ...Typography.label,
     color: Colors.dark.text,
+  },
+  shareButton: {
+    flex: 1,
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+    elevation: 4,
+    shadowColor: '#2196F3',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  shareButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    backgroundColor: '#2196F3', // Beautiful blue gradient color
+    borderRadius: BorderRadius.lg,
+  },
+  shareButtonText: {
+    ...Typography.label,
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 15,
+    letterSpacing: 0.5,
   },
   listContainer: {
     padding: Spacing.md,
@@ -664,9 +777,15 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   compactDetails: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: Spacing.xs,
+  },
+  compactDetailsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
+    flexWrap: 'wrap',
   },
   compactPrice: {
     ...Typography.label,
@@ -789,5 +908,52 @@ const styles = StyleSheet.create({
   bestStorePrice: {
     color: Colors.dark.primary,
     fontWeight: '700',
+  },
+  
+  // Quantity Control Styles
+  quantityControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dark.backgroundCard,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.dark.primary + '30',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.41,
+  },
+  quantityButton: {
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.dark.primary,
+    borderWidth: 0,
+    minWidth: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 1,
+  },
+  quantityText: {
+    ...Typography.label,
+    color: Colors.dark.text,
+    fontWeight: '700',
+    marginHorizontal: Spacing.md,
+    minWidth: 60,
+    textAlign: 'center',
+    fontSize: 14,
   },
 });

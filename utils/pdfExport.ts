@@ -1,5 +1,7 @@
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system';
+import { Platform } from 'react-native';
 import { ShoppingList, Store, ProductPrice } from '@/contexts/AppContext';
 
 export interface PDFExportOptions {
@@ -23,25 +25,52 @@ export async function generateShoppingListPDF(options: PDFExportOptions): Promis
       base64: false,
     });
     
+    console.log('✅ PDF generated successfully:', uri);
     return uri;
   } catch (error) {
+    console.error('❌ PDF generation error:', error);
     throw new Error('Failed to generate PDF');
   }
 }
 
 export async function sharePDF(uri: string, filename: string = 'shopping-list.pdf'): Promise<void> {
   try {
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(uri, {
-        mimeType: 'application/pdf',
-        dialogTitle: 'Share Shopping List',
-        UTI: 'com.adobe.pdf',
-      });
-    } else {
+    console.log('📄 Starting PDF share process...', { uri, filename });
+    
+    // Check if sharing is available
+    if (!(await Sharing.isAvailableAsync())) {
       throw new Error('Sharing is not available on this device');
     }
-  } catch (error) {
-    throw new Error('Failed to share PDF');
+
+    // Ensure the share dialog has enough time to appear
+    console.log('🔄 Initiating share dialog...');
+    
+    // Use consistent sharing options for all platforms
+    const shareResult = await Sharing.shareAsync(uri, {
+      mimeType: 'application/pdf',
+      dialogTitle: 'Share Shopping List PDF',
+      UTI: 'com.adobe.pdf',
+    });
+    
+    console.log('✅ Share completed:', shareResult);
+    
+    // The share was successful if we get here without error
+    return;
+    
+  } catch (error: any) {
+    console.error('❌ PDF sharing failed:', error);
+    
+    // Handle different types of errors
+    if (error.code === 'ERR_SHARING_UNAVAILABLE' || error.message.includes('not available')) {
+      throw new Error('Sharing is not supported on this device');
+    } else if (error.code === 'ERR_SHARING_CANCELLED' || error.message.includes('cancelled')) {
+      // Don't treat cancellation as an error - user chose to cancel
+      console.log('ℹ️ User cancelled sharing');
+      return;
+    } else {
+      console.error('📋 Unexpected sharing error:', error);
+      throw new Error('Failed to open share dialog. Please try again.');
+    }
   }
 }
 
@@ -177,23 +206,38 @@ function generateHTML(itemsByStore: { [storeId: string]: { store: Store; items: 
         }
         .items-table th {
           background-color: #f5f5f5;
-          padding: 15px;
+          padding: 12px 10px;
           text-align: left;
           font-weight: 600;
           color: #1a1a1a;
           border-bottom: 2px solid #e0e0e0;
+          font-size: 13px;
         }
         .items-table td {
-          padding: 15px;
+          padding: 12px 10px;
           border-bottom: 1px solid #e0e0e0;
+          font-size: 13px;
         }
         .item-name {
           font-weight: 600;
           color: #1a1a1a;
-        }
-        .item-quantity {
-          color: #666;
           font-size: 14px;
+        }
+        .item-category {
+          color: #666;
+          font-size: 12px;
+          margin-top: 2px;
+        }
+        .aiel {
+          font-weight: 600;
+          color: #1976d2;
+          text-align: center;
+        }
+        .barcode {
+          font-family: 'Courier New', monospace;
+          font-size: 11px;
+          color: #666;
+        }
         }
         .price {
           font-weight: 700;
@@ -265,9 +309,10 @@ function generateHTML(itemsByStore: { [storeId: string]: { store: Store; items: 
           <thead>
             <tr>
               <th>Item</th>
-              <th>Quantity</th>
+              <th>Aiel</th>
+              <th>Barcode</th>
+              <th>Qty</th>
               <th>Price</th>
-              <th>Savings</th>
               <th>✓</th>
             </tr>
           </thead>
@@ -275,20 +320,19 @@ function generateHTML(itemsByStore: { [storeId: string]: { store: Store; items: 
     `;
     
     items.forEach(item => {
-      const highestPrice = Math.max(...item.allPrices.map(p => p.price));
-      const savings = highestPrice - item.bestPrice.price;
+      const aielNumber = item.product.aielNumber || '-';
+      const barcode = item.product.barcode || '-';
       
       html += `
         <tr>
           <td>
             <div class="item-name">${item.product.name}</div>
-            <div class="item-quantity">${item.product.category}</div>
+            <div class="item-category">${item.product.category}</div>
           </td>
+          <td class="aiel">${aielNumber}</td>
+          <td class="barcode">${barcode}</td>
           <td>${item.quantity}</td>
           <td class="price">£${item.bestPrice.price.toFixed(2)}</td>
-          <td>
-            ${savings > 0 ? `<span class="savings">Save £${savings.toFixed(2)}</span>` : '-'}
-          </td>
           <td>
             <div class="checkbox"></div>
           </td>
@@ -319,7 +363,7 @@ function calculateTotalSavings(itemsByStore: { [storeId: string]: { store: Store
   
   Object.values(itemsByStore).forEach(({ items }) => {
     items.forEach(item => {
-      const highestPrice = Math.max(...item.allPrices.map(p => p.price));
+      const highestPrice = Math.max(...item.allPrices.map((p: any) => p.price));
       const savings = highestPrice - item.bestPrice.price;
       totalSavings += savings * item.quantity;
     });

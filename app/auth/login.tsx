@@ -9,108 +9,174 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Modal,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useApp } from '@/contexts/AppContext';
+import { useContacts } from '@/contexts/ContactsContext';
 import { Colors, Typography, Spacing, BorderRadius, Shadows, Glassmorphism } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Link, useRouter } from 'expo-router';
+import authService from '@/services/authService';
+import { API_CONFIG } from '@/config/api';
 
 export default function LoginScreen() {
   const { dispatch } = useApp();
+  const { initializeAfterLogin } = useContacts();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  
+  // Error modal state
+  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [scaleAnim] = useState(new Animated.Value(0));
+
+  const showError = (message: string) => {
+    setErrorMessage(message);
+    setShowErrorModal(true);
+    scaleAnim.setValue(0);
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 6,
+      tension: 100,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const hideError = () => {
+    Animated.timing(scaleAnim, {
+      toValue: 0,
+      duration: 150,
+      useNativeDriver: true,
+    }).start(() => {
+      setShowErrorModal(false);
+    });
+  };
 
   const validateEmail = (email: string) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
   };
 
+  const handleForgotPassword = () => {
+    Alert.prompt(
+      'Forgot Password',
+      'Enter your email address to receive a password reset link:',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Send Reset Link',
+          onPress: async (inputEmail) => {
+            if (!inputEmail || !validateEmail(inputEmail)) {
+              Alert.alert('Error', 'Please enter a valid email address');
+              return;
+            }
+
+            try {
+              const response = await fetch(`${API_CONFIG.BASE_URL}/auth/forgot-password`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ email: inputEmail }),
+              });
+
+              const data = await response.json();
+
+              if (response.ok) {
+                Alert.alert('Success', data.message);
+              } else {
+                Alert.alert('Error', data.error || 'Failed to send reset link');
+              }
+            } catch (error) {
+              console.error('Forgot password error:', error);
+              Alert.alert('Error', 'Network error. Please try again.');
+            }
+          },
+        },
+      ],
+      'plain-text',
+      email || ''
+    );
+  };
+
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
-      Alert.alert('Error', 'Please fill in all fields');
+      showError('Please fill in all fields');
       return;
     }
 
     if (!validateEmail(email)) {
-      Alert.alert('Error', 'Please enter a valid email address');
+      showError('Please enter a valid email address');
       return;
     }
 
     setIsLoading(true);
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Mock user data
-      const user = {
-        id: '1',
+      // Call backend API - it will automatically detect user type
+      const response = await authService.login({
         email: email.trim(),
-        name: 'Shop Owner',
-        shopName: 'My Shop',
-        location: {
-          latitude: 51.5074,
-          longitude: -0.1278,
-        },
-      };
-
-      console.log('Dispatching LOGIN action with user:', user);
-      dispatch({ type: 'LOGIN', payload: user });
+        password: password.trim(),
+      });
       
-      // Force navigation after login
-      setTimeout(() => {
-        console.log('Navigating to main app...');
-        router.replace('/(tabs)/lists');
-      }, 200);
-    } catch (error) {
-      Alert.alert('Error', 'Login failed. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleQuickLogin = async () => {
-    setEmail('test@shop.com');
-    setPassword('password123');
-    
-    setIsLoading(true);
-    
-    try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Mock user data
+      // Create user object for context
       const user = {
-        id: '1',
-        email: 'test@shop.com',
-        name: 'Test Shop Owner',
-        shopName: 'Test Corner Shop',
+        id: response.user.id,
+        email: response.user.email,
+        name: response.user.name || 'User',
+        shopName: 'My Shop', // You can add this to backend response
         location: {
           latitude: 51.5074,
           longitude: -0.1278,
         },
       };
 
-      console.log('Dispatching LOGIN action with user:', user);
+      console.log('Login successful:', user);
+      console.log('User type detected:', response.user.userType);
       dispatch({ type: 'LOGIN', payload: user });
       
-      // Force navigation after login
+      // Initialize chat data after successful login
+      await initializeAfterLogin();
+      
+      // Verify token is stored before navigating
+      const storedToken = await AsyncStorage.getItem('auth_token');
+      console.log('Token verified in storage:', !!storedToken);
+      
+      // Navigate to main app after ensuring token is ready
       setTimeout(() => {
-        console.log('Navigating to main app...');
         router.replace('/(tabs)/lists');
-      }, 200);
-    } catch (error) {
-      Alert.alert('Error', 'Login failed. Please try again.');
+      }, 500); // Increased delay to ensure token is available
+    } catch (error: any) {
+      console.error('Login error:', error);
+      const message = error.message || 'Login failed. Please try again.';
+      // Check for common credential errors
+      if (message.toLowerCase().includes('invalid') || 
+          message.toLowerCase().includes('incorrect') ||
+          message.toLowerCase().includes('wrong') ||
+          message.toLowerCase().includes('not found')) {
+        showError('Invalid email or password. Please check your credentials and try again.');
+      } else if (message.toLowerCase().includes('network')) {
+        showError('Network error. Please check your internet connection.');
+      } else {
+        showError(message);
+      }
     } finally {
       setIsLoading(false);
     }
   };
+
+
 
   return (
     <SafeAreaView style={styles.container}>
@@ -121,11 +187,11 @@ export default function LoginScreen() {
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <View style={styles.header}>
             <View style={styles.logoContainer}>
-              <IconSymbol name="pound.circle.fill" size={60} color={Colors.dark.primary} />
+              <IconSymbol name="cart.circle.fill" size={60} color={Colors.dark.primary} />
             </View>
-            <ThemedText style={styles.title}>Welcome Back</ThemedText>
+            <ThemedText style={styles.title}>Welcome to Paymi</ThemedText>
             <ThemedText style={styles.subtitle}>
-              Sign in to compare prices and save money
+              Compare prices and save money on your shopping
             </ThemedText>
           </View>
 
@@ -174,10 +240,6 @@ export default function LoginScreen() {
               </View>
             </View>
 
-            <TouchableOpacity style={styles.forgotPassword}>
-              <ThemedText style={styles.forgotPasswordText}>Forgot Password?</ThemedText>
-            </TouchableOpacity>
-
             <TouchableOpacity
               style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
               onPress={handleLogin}
@@ -190,37 +252,55 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <ThemedText style={styles.dividerText}>or</ThemedText>
-              <View style={styles.dividerLine} />
-            </View>
-
+            {/* Forgot Password Link */}
             <TouchableOpacity 
-              style={styles.testButton} 
-              onPress={handleQuickLogin}
-              disabled={isLoading}
+              style={styles.forgotPasswordContainer}
+              onPress={handleForgotPassword}
             >
-              <IconSymbol name="person.badge.plus" size={20} color={Colors.light.background} />
-              <ThemedText style={styles.testButtonText}>Quick Test Login</ThemedText>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.googleButton}>
-              <IconSymbol name="globe" size={20} color={Colors.dark.text} />
-              <ThemedText style={styles.googleButtonText}>Continue with Google</ThemedText>
+              <ThemedText style={styles.forgotPasswordText}>Forgot Password?</ThemedText>
             </TouchableOpacity>
           </ThemedView>
 
           <View style={styles.footer}>
-            <ThemedText style={styles.footerText}>Don't have an account? </ThemedText>
+            <ThemedText style={styles.footerText}>New to Paymi? </ThemedText>
             <Link href="/auth/register" asChild>
               <TouchableOpacity>
-                <ThemedText style={styles.signUpText}>Sign Up</ThemedText>
+                <ThemedText style={styles.signUpText}>Create Account - Free Trial!</ThemedText>
               </TouchableOpacity>
             </Link>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Custom Error Modal */}
+      <Modal
+        visible={showErrorModal}
+        transparent
+        animationType="fade"
+        onRequestClose={hideError}
+      >
+        <TouchableOpacity 
+          style={styles.errorModalOverlay} 
+          activeOpacity={1} 
+          onPress={hideError}
+        >
+          <Animated.View 
+            style={[
+              styles.errorModalContent,
+              { transform: [{ scale: scaleAnim }] }
+            ]}
+          >
+            <View style={styles.errorIconContainer}>
+              <Text style={styles.errorEmoji}>😔</Text>
+            </View>
+            <Text style={styles.errorTitle}>Oops!</Text>
+            <Text style={styles.errorText}>{errorMessage}</Text>
+            <TouchableOpacity style={styles.errorButton} onPress={hideError}>
+              <Text style={styles.errorButtonText}>Try Again</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -254,6 +334,13 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: Colors.dark.textSecondary,
     textAlign: 'center',
+  },
+  autoDetectText: {
+    ...Typography.bodySmall,
+    color: Colors.dark.primary,
+    textAlign: 'center',
+    marginTop: Spacing.xs,
+    fontStyle: 'italic',
   },
   formContainer: {
     backgroundColor: Colors.dark.backgroundCard,
@@ -295,10 +382,6 @@ const styles = StyleSheet.create({
   forgotPassword: {
     alignSelf: 'flex-end',
     marginBottom: Spacing.xl,
-  },
-  forgotPasswordText: {
-    ...Typography.bodySmall,
-    color: Colors.dark.primary,
   },
   loginButton: {
     backgroundColor: Colors.dark.primary,
@@ -376,6 +459,73 @@ const styles = StyleSheet.create({
   signUpText: {
     ...Typography.body,
     color: Colors.dark.primary,
+    fontWeight: '700',
+  },
+  forgotPasswordContainer: {
+    alignItems: 'center',
+    marginTop: Spacing.md,
+  },
+  forgotPasswordText: {
+    ...Typography.body,
+    color: Colors.dark.primary,
+    textDecorationLine: 'underline',
+  },
+  // Error Modal Styles
+  errorModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.xl,
+  },
+  errorModalContent: {
+    backgroundColor: Colors.dark.backgroundCard,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 320,
+    borderWidth: 1,
+    borderColor: Colors.dark.glassBorder,
+    ...Shadows.lg,
+  },
+  errorIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: Colors.dark.errorLight || 'rgba(239, 68, 68, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
+  errorEmoji: {
+    fontSize: 40,
+  },
+  errorTitle: {
+    ...Typography.h3,
+    color: Colors.dark.text,
+    marginBottom: Spacing.sm,
+    textAlign: 'center',
+  },
+  errorText: {
+    ...Typography.body,
+    color: Colors.dark.textSecondary,
+    textAlign: 'center',
+    marginBottom: Spacing.xl,
+    lineHeight: 22,
+  },
+  errorButton: {
+    backgroundColor: Colors.dark.primary,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    minWidth: 150,
+    alignItems: 'center',
+    ...Shadows.neon,
+  },
+  errorButtonText: {
+    ...Typography.label,
+    color: Colors.dark.background,
     fontWeight: '700',
   },
 });
